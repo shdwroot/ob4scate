@@ -1,0 +1,108 @@
+services:
+  gateway_proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app/gateway_proxy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - obfuscation_engine
+      - tokenization_vault
+      - litellm_integration
+      - policy_engine
+      - audit_logging
+
+  obfuscation_engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app/obfuscation_engine
+    command: uvicorn main:app --host 0.0.0.0 --port 8001
+    ports:
+      - "8001:8001"
+
+  tokenization_vault:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app/tokenization_vault
+    command: uvicorn main:app --host 0.0.0.0 --port 8002
+    environment:
+      - DB_HOST=tokenization_vault_db
+      - DB_PORT=5432
+      - DB_USER=vault_user
+      - DB_PASS=vault_pass
+      - DB_NAME=vault_db
+    ports:
+      - "8002:8002"
+    depends_on:
+      - tokenization_vault_db
+
+  tokenization_vault_db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: vault_user
+      POSTGRES_PASSWORD: vault_pass
+      POSTGRES_DB: vault_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  litellm_integration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app/litellm_integration
+    command: uvicorn main:app --host 0.0.0.0 --port 8003
+    ports:
+      - "8003:8003"
+    environment:
+      - LITELLM_BASE_URL=http://ollama:11434
+    depends_on:
+      - ollama
+
+  policy_engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app/policy_engine
+    command: uvicorn main:app --host 0.0.0.0 --port 8004
+    ports:
+      - "8004:8004"
+
+  audit_logging:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app/audit_logging
+    command: uvicorn main:app --host 0.0.0.0 --port 8005
+    ports:
+      - "8005:8005"
+    volumes:
+      - ./logs:/app/logs
+
+  ollama:
+    image: ollama/ollama:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    entrypoint: /bin/bash
+    command: -c "ollama serve & sleep 5 && ollama pull mistral && tail -f /dev/null"
+
+volumes:
+  postgres_data:
+  ollama_data:

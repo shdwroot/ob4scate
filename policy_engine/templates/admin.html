@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Policy Engine Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  
+  <!-- Local Black Dashboard CSS -->
+  <link rel="stylesheet" href="/policy/static/assets/css/black-dashboard.min.css">
+  <link rel="stylesheet" href="/policy/static/assets/css/nucleo-icons.css">
+  <link href="https://fonts.googleapis.com/css?family=Montserrat:400,700,200" rel="stylesheet">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.1/css/all.css">
+</head>
+<body class="sidebar-mini">
+  <div class="wrapper">
+    <!-- Sidebar -->
+    <div class="sidebar" data-color="blue">
+      <div class="sidebar-wrapper">
+        <div class="logo">
+          <a href="#" class="simple-text logo-mini">
+            <i class="fas fa-shield-alt"></i>
+          </a>
+          <a href="#" class="simple-text logo-normal">
+            Policy Engine
+          </a>
+        </div>
+        <ul class="nav">
+          <li class="active">
+            <a href="/policy/admin">
+              <i class="fas fa-cogs"></i>
+              <p>Admin Panel</p>
+            </a>
+          </li>
+          <li>
+            <a href="/policy/rules">
+              <i class="fas fa-database"></i>
+              <p>API Rules</p>
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Main Panel -->
+    <div class="main-panel">
+      <!-- Navbar -->
+      <nav class="navbar navbar-expand-lg navbar-absolute navbar-transparent">
+        <div class="container-fluid">
+          <div class="navbar-wrapper">
+            <a class="navbar-brand" href="#">Policy Engine Admin</a>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Content -->
+      <div class="content">
+        <div class="row">
+          <div class="col-md-12">
+            <div class="card">
+              <div class="card-header">
+                <h4 class="card-title">Current Policy Rules</h4>
+              </div>
+              <div class="card-body">
+                <form id="policy-form">
+                  <div id="rules-container" class="mb-3">
+                    <!-- Rules loaded dynamically -->
+                  </div>
+                  <button type="submit" class="btn btn-primary">Save Changes</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <div class="container-fluid">
+          <nav>
+            <ul>
+              <li>
+                <a href="https://www.creative-tim.com/product/black-dashboard">
+                  Black Dashboard Theme
+                </a>
+              </li>
+            </ul>
+          </nav>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Local JS -->
+  <script src="/policy/static/assets/js/core/jquery.min.js"></script>
+  <script src="/policy/static/assets/js/core/popper.min.js"></script>
+  <script src="/policy/static/assets/js/core/bootstrap.min.js"></script>
+  <script src="/policy/static/assets/js/plugins/perfect-scrollbar.jquery.min.js"></script>
+  <script src="/policy/static/assets/js/black-dashboard.min.js"></script>
+  <script>
+    async function loadRules() {
+      const res = await fetch('/policy/rules');
+      const rules = await res.json();
+      const container = document.getElementById('rules-container');
+      container.innerHTML = '';
+
+      Object.entries(rules).forEach(([key, value]) => {
+        if (Array.isArray(value)) {
+          container.innerHTML += `
+            <div class="form-group">
+              <label>${key}</label>
+              <textarea class="form-control" rows="4" data-key="${key}">${JSON.stringify(value, null, 2)}</textarea>
+            </div>
+          `;
+        } else if (typeof value === 'boolean') {
+          container.innerHTML += `
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="${key}" ${value ? 'checked' : ''} data-key="${key}">
+              <label class="form-check-label" for="${key}">${key}</label>
+            </div>
+          `;
+        } else {
+          container.innerHTML += `
+            <div class="form-group">
+              <label>${key}</label>
+              <input class="form-control" type="text" value="${value}" data-key="${key}">
+            </div>
+          `;
+        }
+      });
+    }
+
+    document.getElementById('policy-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const inputs = document.querySelectorAll('#rules-container [data-key]');
+      const updatedRules = {};
+      inputs.forEach(input => {
+        const key = input.getAttribute('data-key');
+        if (input.type === 'checkbox') {
+          updatedRules[key] = input.checked;
+        } else {
+          try {
+            updatedRules[key] = JSON.parse(input.value);
+          } catch {
+            updatedRules[key] = input.value;
+          }
+        }
+      });
+      await fetch('/policy/rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedRules)
+      });
+      alert("Rules updated successfully");
+      loadRules();
+    });
+
+    loadRules();
+  </script>
+</body>
+</html>
