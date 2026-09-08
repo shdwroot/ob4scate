@@ -1,4 +1,4 @@
-# Enterprise Data Obfuscation Gateway
+# Small Business Data Obfuscation Gateway
 
 A Python/FastAPI-based reverse proxy and microservice suite for secure, context-preserving use of external LLMs in enterprise environments.  
 Implements PII obfuscation, tokenization, policy enforcement, LiteLLM routing, and immutable audit logging.
