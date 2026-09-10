@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="Policy Engine", version="0.5.0", root_path="/policy")
+app = FastAPI(title="Policy Engine", version="0.5.0")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "assets"), name="static")
