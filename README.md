@@ -1,90 +1,116 @@
-# Small Business Data Obfuscation Gateway
+# ob4scate
 
-A Python/FastAPI-based reverse proxy and microservice suite for secure, context-preserving use of external LLMs in enterprise environments.  
-Implements PII obfuscation, tokenization, policy enforcement, LiteLLM routing, and immutable audit logging.
+`ob4scate` is a Python/FastAPI gateway for redacting sensitive text before it is sent to a
+local or private LLM. The repository contains authentication and RBAC, policy-based
+redaction, encrypted token mappings, LLM routing, and tamper-evident audit storage.
 
-## 📂 Project Structure
+This codebase is an actively developed foundation. The checked-in
+[implementation plan](./IMPLEMENTATION_PLAN.md) lists larger enterprise features that are
+not yet complete, including external identity providers, Kubernetes deployment, distributed
+tracing, provider failover, and model fine-tuning.
+
+## Security model
+
+- No built-in username or password is enabled. A bootstrap administrator is created only
+  when `BOOTSTRAP_ADMIN_PASSWORD` is explicitly configured.
+- Access and refresh tokens are audience- and issuer-bound. Refresh tokens rotate after use
+  and are tied to a server-side session.
+- RBAC checks fail closed for unknown permissions and prevent cross-tenant resource access.
+- Sanitization endpoints return only redacted output, never the original input.
+- Token-vault originals are encrypted with a Fernet key before PostgreSQL storage.
+- Audit rows are HMAC chained. `/verify` reports the first row whose contents or chain link
+  has been modified.
+- Docker publishes only the gateway on `127.0.0.1`; backing services stay on the Compose
+  network.
+
+TLS termination, secret management, rate limiting, and an external identity provider are
+deployment responsibilities and must be configured before exposing the gateway publicly.
+
+## Repository layout
+
+```text
+gateway_proxy/         Unified API and authorization boundary
+auth_service/          JWT, sessions, password hashing, and RBAC
+obfuscation_engine/    Email and named-entity redaction
+policy_engine/         Validated, hot-reloadable redaction rules and admin UI
+tokenization_vault/    Encrypted token mappings in PostgreSQL
+litellm_integration/   Async Ollama-compatible LLM connector and routing rules
+audit_logging/         HMAC-chained SQLite audit events
 ```
-gateway_proxy/         # API Gateway entrypoint
-obfuscation_engine/    # PII/quasi-identifier detection & obfuscation
-tokenization_vault/    # Secure mapping storage (PostgreSQL + pgcrypto)
-litellm_integration/   # LiteLLM unified API connector
-policy_engine/         # Configurable obfuscation rules
-audit_logging/         # Immutable logging service
-IMPLEMENTATION_PLAN.md # Full architecture & roadmap
-```
 
----
+## Local development
 
-## 🛠 Development Setup
+Prerequisites: Python 3.11, [uv](https://docs.astral.sh/uv/), and optionally Docker Desktop.
 
-### 1. Clone repository
 ```bash
-git clone <repo_url>
-cd <project_dir>
+./scripts/uv-local sync --all-groups
+cp .env.example .env
 ```
 
-### 2. Install dependencies
-Make sure you have Python 3.10+  
-It's recommended to use a virtual environment:
+Replace every placeholder in `.env`. Generate strong values with:
+
 ```bash
-python -m venv venv
-source venv/bin/activate   # Linux/macOS
-venv\Scripts\activate      # Windows
-
-pip install fastapi uvicorn spacy psycopg2 requests
-python -m spacy download en_core_web_sm
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+./scripts/uv-local run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-### 3. Run microservices locally
-Open **six terminals** or run them in background mode:
+Load the environment and start the unified gateway:
+
 ```bash
-uvicorn gateway_proxy.main:app --reload --port 8000
-uvicorn obfuscation_engine.main:app --reload --port 8001
-uvicorn tokenization_vault.main:app --reload --port 8002
-uvicorn litellm_integration.main:app --reload --port 8003
-uvicorn policy_engine.main:app --reload --port 8004
-uvicorn audit_logging.main:app --reload --port 8005
+set -a
+source .env
+set +a
+./scripts/uv-local run uvicorn gateway_proxy.main:app --reload --port 8000
 ```
 
-### 4. Test services
+The API documentation is at <http://127.0.0.1:8000/docs> and health is at
+<http://127.0.0.1:8000/health>.
+
+## Validation
+
 ```bash
-curl http://localhost:8000/health
-curl -X POST http://localhost:8001/sanitize -H "Content-Type: application/json" -d '{"text": "Email me at test@example.com"}'
+./scripts/uv-local run ruff check .
+./scripts/uv-local run ruff format --check .
+./scripts/uv-local run bandit -c pyproject.toml -x "*/test_*.py" -r audit_logging auth_service gateway_proxy \
+  litellm_integration obfuscation_engine policy_engine tokenization_vault
+./scripts/uv-local run pip-audit
+APP_ENV=test \
+JWT_SECRET_KEY=test-only-secret-key-with-at-least-32-characters \
+AUDIT_LOG_SIGNING_KEY=test-only-audit-key-with-at-least-32-characters \
+./scripts/uv-local run pytest --cov
 ```
 
----
+CI runs the same lint, format, security, and test gates on every pull request.
 
-## 📦 Deployment
+## Docker Compose
 
-### Docker Compose (Recommended for Dev)
-1. Create a `Dockerfile` in each microservice directory.
-2. Create a `docker-compose.yml` file referencing all six services.
-3. Run:
+After configuring `.env`:
+
 ```bash
 docker compose up --build
+docker compose exec ollama ollama pull mistral
 ```
-Only `gateway_proxy` will be exposed publicly; others communicate internally.
 
-### Kubernetes (Production)
-- Package each service into its own Docker image.
-- Write Kubernetes manifests for:
-  - **Deployments** (one per service)
-  - **Services** (ClusterIP for internal, LoadBalancer/Ingress for gateway)
-- Use an **Ingress Controller** or API Gateway (NGINX, Istio, Traefik) to route traffic.
-- Apply manifests:
+Only `http://127.0.0.1:8000` is published to the host. PostgreSQL, Redis, Ollama,
+and the service-specific FastAPI processes are reachable only inside the Compose network.
+
+Stop the stack without deleting its data:
+
 ```bash
-kubectl apply -f k8s/
+docker compose down
 ```
 
----
+## Authentication example
 
-## 🔐 Security Notes
-- Always enable TLS (end-to-end encryption).
-- Restrict internal service traffic using network policies.
-- Use external secret management (e.g., HashiCorp Vault) for credentials.
+```bash
+curl -sS http://127.0.0.1:8000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"YOUR_BOOTSTRAP_PASSWORD"}'
+```
 
----
+Use the returned access token as `Authorization: Bearer <token>`. The refresh endpoint
+returns a new refresh token each time; the previous refresh token cannot be reused.
 
-## 📈 Roadmap
-See [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md) for phased roadmap and architecture diagram.
+## License
+
+See [LICENSE](./LICENSE).

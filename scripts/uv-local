@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+runtime_root="${TMPDIR:-/tmp}/ob4scate-uv"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$runtime_root/cache}"
+export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$runtime_root/venv}"
+
+exec uv "$@"

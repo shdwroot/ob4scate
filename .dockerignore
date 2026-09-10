@@ -1,0 +1,13 @@
+.git
+.github
+.kiro
+.venv
+.uv-cache
+**/__pycache__
+**/*.py[cod]
+.data
+.env
+.pytest_cache
+.ruff_cache
+audit_logs.db
+logs

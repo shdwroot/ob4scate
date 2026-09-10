@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [x] 1. Enhanced Authentication and RBAC Foundation
+- [ ] 1. Enhanced Authentication and RBAC Foundation
 
 
 
@@ -22,9 +22,9 @@
   - _Requirements: 4.1, 4.2_
 
 
-- [x] 1.2 Implement RBAC engine with Oso integration
+- [x] 1.2 Implement tenant-aware RBAC engine
 
-  - Define role hierarchy and permission models in Oso policies
+  - Define a single typed role hierarchy and permission model
   - Create RBAC middleware for FastAPI endpoints
   - Implement permission checking decorators
   - Write comprehensive RBAC unit tests
@@ -32,7 +32,7 @@
 
 
 
-- [ ] 1.3 Add authentication middleware to Gateway Proxy
+- [x] 1.3 Add authentication middleware to Gateway Proxy
   - Integrate JWT validation middleware into gateway routing
   - Add RBAC permission checks for all service endpoints
   - Implement request context propagation for user identity

@@ -1,308 +1,153 @@
-"""
-Unit tests for authentication service
-Tests JWT token generation/validation, password hashing, and session management
-"""
+"""Authentication unit and lifecycle tests."""
+
+from datetime import timedelta
+
 import pytest
-import asyncio
-from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
-import json
+from fastapi import HTTPException
 
 from .auth_core import (
-    JWTManager, 
-    PasswordManager, 
-    SessionManager, 
+    AuthenticationError,
     AuthService,
-    AuthenticationError
+    JWTManager,
+    PasswordManager,
+    SessionManager,
 )
 
 
+def token_data(**overrides):
+    data = {
+        "sub": "test_user",
+        "username": "testuser",
+        "roles": ["user"],
+        "tenant_id": "tenant1",
+        "session_id": "test_session_id",
+    }
+    return {**data, **overrides}
+
+
 class TestJWTManager:
-    """Test JWT token generation and validation"""
-    
-    def test_create_access_token(self):
-        """Test access token creation"""
-        data = {"sub": "test_user", "username": "testuser"}
-        token = JWTManager.create_access_token(data)
-        
-        assert isinstance(token, str)
-        assert len(token) > 0
-        
-        # Verify token can be decoded
-        payload = JWTManager.verify_token(token, "access")
+    def test_create_and_verify_access_token(self):
+        payload = JWTManager.verify_token(JWTManager.create_access_token(token_data()), "access")
         assert payload["sub"] == "test_user"
-        assert payload["username"] == "testuser"
+        assert payload["aud"] == "ob4scate-api"
+        assert payload["iss"] == "ob4scate-auth"
         assert payload["type"] == "access"
-    
-    def test_create_refresh_token(self):
-        """Test refresh token creation"""
-        data = {"sub": "test_user", "username": "testuser"}
-        token = JWTManager.create_refresh_token(data)
-        
-        assert isinstance(token, str)
-        assert len(token) > 0
-        
-        # Verify token can be decoded
-        payload = JWTManager.verify_token(token, "refresh")
+        assert payload["jti"]
+
+    def test_create_and_verify_refresh_token(self):
+        payload = JWTManager.verify_token(JWTManager.create_refresh_token(token_data()), "refresh")
         assert payload["sub"] == "test_user"
-        assert payload["username"] == "testuser"
         assert payload["type"] == "refresh"
-    
-    def test_verify_token_invalid_type(self):
-        """Test token verification with wrong type"""
-        data = {"sub": "test_user"}
-        access_token = JWTManager.create_access_token(data)
-        
+
+    def test_rejects_wrong_token_type(self):
+        access_token = JWTManager.create_access_token(token_data())
         with pytest.raises(AuthenticationError, match="Invalid token type"):
             JWTManager.verify_token(access_token, "refresh")
-    
-    def test_verify_token_invalid_token(self):
-        """Test token verification with invalid token"""
+
+    def test_rejects_invalid_token(self):
         with pytest.raises(AuthenticationError, match="Token validation failed"):
             JWTManager.verify_token("invalid_token", "access")
-    
-    def test_token_expiration(self):
-        """Test token expiration"""
-        data = {"sub": "test_user"}
-        # Create token with very short expiration
-        expires_delta = timedelta(seconds=-1)  # Already expired
-        token = JWTManager.create_access_token(data, expires_delta)
-        
+
+    def test_rejects_expired_token(self):
+        token = JWTManager.create_access_token(token_data(), expires_delta=timedelta(seconds=-1))
         with pytest.raises(AuthenticationError, match="Token validation failed"):
+            JWTManager.verify_token(token, "access")
+
+    def test_rejects_token_without_session(self):
+        token = JWTManager.create_access_token({"sub": "test_user"})
+        with pytest.raises(AuthenticationError, match="required session claims"):
             JWTManager.verify_token(token, "access")
 
 
 class TestPasswordManager:
-    """Test password hashing and verification"""
-    
-    def test_hash_password(self):
-        """Test password hashing"""
-        password = "test_password_123"
-        hashed = PasswordManager.hash_password(password)
-        
-        assert isinstance(hashed, str)
-        assert len(hashed) > 0
-        assert hashed != password  # Should be different from original
-    
-    def test_verify_password_correct(self):
-        """Test password verification with correct password"""
-        password = "test_password_123"
-        hashed = PasswordManager.hash_password(password)
-        
-        assert PasswordManager.verify_password(password, hashed) is True
-    
-    def test_verify_password_incorrect(self):
-        """Test password verification with incorrect password"""
-        password = "test_password_123"
-        wrong_password = "wrong_password"
-        hashed = PasswordManager.hash_password(password)
-        
-        assert PasswordManager.verify_password(wrong_password, hashed) is False
-    
-    def test_generate_salt(self):
-        """Test salt generation"""
-        salt1 = PasswordManager.generate_salt()
-        salt2 = PasswordManager.generate_salt()
-        
-        assert isinstance(salt1, str)
-        assert isinstance(salt2, str)
-        assert len(salt1) == 32  # 16 bytes = 32 hex chars
-        assert len(salt2) == 32
-        assert salt1 != salt2  # Should be different
+    def test_hash_and_verify_password(self):
+        plain_text = "test_password_123"
+        hashed = PasswordManager.hash_password(plain_text)
+        assert hashed.startswith("$argon2")
+        assert hashed != plain_text
+        assert PasswordManager.verify_password(plain_text, hashed)
+        assert not PasswordManager.verify_password("wrong_password", hashed)
+
+    def test_rejects_malformed_hash(self):
+        assert not PasswordManager.verify_password("password", "not-a-password-hash")
 
 
 class TestSessionManager:
-    """Test session management with Redis backend"""
-    
-    @pytest.fixture
-    def mock_redis(self):
-        """Mock Redis client"""
-        mock_client = Mock()
-        mock_client.setex.return_value = True
-        mock_client.sadd.return_value = 1
-        mock_client.expire.return_value = True
-        mock_client.get.return_value = None
-        mock_client.delete.return_value = 1
-        mock_client.smembers.return_value = set()
-        mock_client.srem.return_value = 1
-        return mock_client
-    
-    @pytest.fixture
-    def session_manager(self, mock_redis):
-        """Session manager with mocked Redis"""
+    @pytest.mark.asyncio
+    async def test_session_lifecycle_and_refresh_rotation(self):
         manager = SessionManager()
-        manager.redis_client = mock_redis
-        return manager
-    
+        session_id = await manager.create_session(
+            "test_user",
+            {
+                "username": "testuser",
+                "roles": ["user"],
+                "refresh_jti": "old-jti",
+            },
+        )
+        session = await manager.get_session(session_id)
+        assert session is not None
+        assert session["user_id"] == "test_user"
+
+        assert await manager.rotate_refresh_token(session_id, "old-jti", "new-jti")
+        assert not await manager.rotate_refresh_token(session_id, "old-jti", "third-jti")
+        assert not await manager.invalidate_session(session_id, "other_user")
+        assert await manager.invalidate_session(session_id, "test_user")
+        assert await manager.get_session(session_id) is None
+
     @pytest.mark.asyncio
-    async def test_create_session(self, session_manager, mock_redis):
-        """Test session creation"""
-        user_id = "test_user"
-        session_data = {"username": "testuser", "roles": ["user"]}
-        
-        session_id = await session_manager.create_session(user_id, session_data)
-        
-        assert isinstance(session_id, str)
-        assert len(session_id) > 0
-        
-        # Verify Redis calls
-        mock_redis.setex.assert_called_once()
-        mock_redis.sadd.assert_called_once()
-        mock_redis.expire.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_get_session_exists(self, session_manager, mock_redis):
-        """Test getting existing session"""
-        session_id = "test_session_id"
-        session_data = {
-            "session_id": session_id,
-            "user_id": "test_user",
-            "username": "testuser",
-            "created_at": datetime.utcnow().isoformat()
-        }
-        
-        mock_redis.get.return_value = json.dumps(session_data)
-        
-        result = await session_manager.get_session(session_id)
-        
-        assert result is not None
-        assert result["session_id"] == session_id
-        assert result["user_id"] == "test_user"
-        assert "last_accessed" in result
-    
-    @pytest.mark.asyncio
-    async def test_get_session_not_exists(self, session_manager, mock_redis):
-        """Test getting non-existent session"""
-        session_id = "non_existent_session"
-        mock_redis.get.return_value = None
-        
-        result = await session_manager.get_session(session_id)
-        
-        assert result is None
-    
-    @pytest.mark.asyncio
-    async def test_invalidate_session(self, session_manager, mock_redis):
-        """Test session invalidation"""
-        session_id = "test_session_id"
-        session_data = {
-            "session_id": session_id,
-            "user_id": "test_user"
-        }
-        
-        mock_redis.get.return_value = json.dumps(session_data)
-        mock_redis.delete.return_value = 1
-        
-        result = await session_manager.invalidate_session(session_id)
-        
-        assert result is True
-        mock_redis.delete.assert_called()
-        mock_redis.srem.assert_called()
-    
-    @pytest.mark.asyncio
-    async def test_invalidate_user_sessions(self, session_manager, mock_redis):
-        """Test invalidating all user sessions"""
-        user_id = "test_user"
-        session_ids = {"session1", "session2", "session3"}
-        
-        mock_redis.smembers.return_value = session_ids
-        mock_redis.delete.return_value = 1
-        
-        count = await session_manager.invalidate_user_sessions(user_id)
-        
-        assert count == 3  # Should delete 3 sessions
-        assert mock_redis.delete.call_count == 4  # 3 sessions + 1 user sessions set
+    async def test_invalidates_all_user_sessions(self):
+        manager = SessionManager()
+        await manager.create_session("test_user", {"refresh_jti": "one"})
+        await manager.create_session("test_user", {"refresh_jti": "two"})
+        assert await manager.invalidate_user_sessions("test_user") == 2
+
+
+@pytest.fixture
+def configured_auth_service():
+    return AuthService(
+        users={
+            "admin": {
+                "user_id": "admin-id",
+                "username": "admin",
+                "password_hash": PasswordManager.hash_password("test-admin-password"),
+                "roles": ["super_admin"],
+                "permissions": [],
+                "tenant_id": "tenant1",
+            }
+        },
+        session_manager=SessionManager(),
+    )
 
 
 class TestAuthService:
-    """Test main authentication service"""
-    
-    @pytest.fixture
-    def auth_service(self):
-        """Auth service instance"""
-        return AuthService()
-    
     @pytest.mark.asyncio
-    async def test_authenticate_user_valid(self, auth_service):
-        """Test user authentication with valid credentials"""
-        user = await auth_service.authenticate_user("admin", "admin123")
-        
-        assert user is not None
-        assert user["username"] == "admin"
-        assert user["user_id"] == "admin"
-        assert "roles" in user
-        assert "permissions" in user
-    
-    @pytest.mark.asyncio
-    async def test_authenticate_user_invalid(self, auth_service):
-        """Test user authentication with invalid credentials"""
-        user = await auth_service.authenticate_user("admin", "wrong_password")
-        
-        assert user is None
-    
-    @pytest.mark.asyncio
-    async def test_login_success(self, auth_service):
-        """Test successful login"""
-        with patch.object(auth_service.session_manager, 'create_session', return_value="test_session_id"):
-            result = await auth_service.login("admin", "admin123")
-            
-            assert "access_token" in result
-            assert "refresh_token" in result
-            assert result["token_type"] == "bearer"
-            assert "expires_in" in result
-    
-    @pytest.mark.asyncio
-    async def test_login_failure(self, auth_service):
-        """Test failed login"""
-        with pytest.raises(Exception):  # Should raise HTTPException
-            await auth_service.login("admin", "wrong_password")
-    
-    @pytest.mark.asyncio
-    async def test_logout(self, auth_service):
-        """Test logout"""
-        with patch.object(auth_service.session_manager, 'invalidate_session', return_value=True):
-            result = await auth_service.logout("test_session_id")
-            
-            assert result is True
-    
-    @pytest.mark.asyncio
-    async def test_refresh_token_valid(self, auth_service):
-        """Test token refresh with valid refresh token"""
-        # Create a valid refresh token
-        token_data = {
-            "sub": "test_user",
-            "username": "testuser",
-            "roles": ["user"],
-            "session_id": "test_session_id"
-        }
-        refresh_token = auth_service.jwt_manager.create_refresh_token(token_data)
-        
-        with patch.object(auth_service.session_manager, 'get_session', return_value={"valid": True}):
-            result = await auth_service.refresh_token(refresh_token)
-            
-            assert "access_token" in result
-            assert result["refresh_token"] == refresh_token
-            assert result["token_type"] == "bearer"
-    
-    @pytest.mark.asyncio
-    async def test_validate_token_valid(self, auth_service):
-        """Test token validation with valid token"""
-        # Create a valid access token
-        token_data = {
-            "sub": "test_user",
-            "username": "testuser",
-            "roles": ["user"],
-            "session_id": "test_session_id"
-        }
-        access_token = auth_service.jwt_manager.create_access_token(token_data)
-        
-        with patch.object(auth_service.session_manager, 'get_session', return_value={"valid": True}):
-            result = await auth_service.validate_token(access_token)
-            
-            assert result["user_id"] == "test_user"
-            assert result["username"] == "testuser"
-            assert result["session_id"] == "test_session_id"
+    async def test_has_no_builtin_admin_account(self):
+        service = AuthService(users={})
+        assert await service.authenticate_user("admin", "admin123") is None
 
+    @pytest.mark.asyncio
+    async def test_login_validate_refresh_and_logout(self, configured_auth_service):
+        tokens = await configured_auth_service.login("admin", "test-admin-password")
+        identity = await configured_auth_service.validate_token(tokens["access_token"])
+        assert identity["user_id"] == "admin-id"
+        assert identity["tenant_id"] == "tenant1"
 
-# Test runner
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+        refreshed = await configured_auth_service.refresh_token(tokens["refresh_token"])
+        assert refreshed["refresh_token"] != tokens["refresh_token"]
+        await configured_auth_service.validate_token(refreshed["access_token"])
+
+        with pytest.raises(HTTPException) as reused:
+            await configured_auth_service.refresh_token(tokens["refresh_token"])
+        assert reused.value.status_code == 401
+
+        payload = JWTManager.verify_token(refreshed["access_token"])
+        assert await configured_auth_service.logout(payload["session_id"], "admin-id")
+        with pytest.raises(HTTPException) as logged_out:
+            await configured_auth_service.validate_token(refreshed["access_token"])
+        assert logged_out.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_login_rejects_invalid_credentials(self, configured_auth_service):
+        with pytest.raises(HTTPException) as invalid:
+            await configured_auth_service.login("admin", "wrong-password")
+        assert invalid.value.status_code == 401

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install 3.11
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format check
+        run: uv run ruff format --check .
+      - name: Security scan
+        run: uv run bandit -c pyproject.toml -x "*/test_*.py" -r audit_logging auth_service gateway_proxy litellm_integration obfuscation_engine policy_engine tokenization_vault
+      - name: Dependency audit
+        run: uv run pip-audit
+      - name: Tests
+        env:
+          APP_ENV: test
+          JWT_SECRET_KEY: test-only-secret-key-with-at-least-32-characters
+          AUDIT_LOG_SIGNING_KEY: test-only-audit-key-with-at-least-32-characters
+        run: uv run pytest --cov --cov-report=term-missing --cov-fail-under=70

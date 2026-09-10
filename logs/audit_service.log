@@ -1,9 +1,0 @@
-=== Audit Logging Service Started ===
-2025-08-12 04:12:17,965 [INFO] Logging initialized. Host log file path: X:\dev-projects\0b4scAte\logs\audit_service.log
-2025-08-12 04:12:17,966 [INFO] Database initialized.
-2025-08-12 04:12:18,086 [DEBUG] loaded lazy attr 'SafeConfigParser': <class 'configparser.ConfigParser'>
-2025-08-12 04:12:18,086 [DEBUG] loaded lazy attr 'NativeStringIO': <class '_io.StringIO'>
-2025-08-12 04:12:18,086 [DEBUG] loaded lazy attr 'BytesIO': <class '_io.BytesIO'>
-2025-08-12 04:12:18,091 [DEBUG] registered 'bcrypt' handler: <class 'passlib.handlers.bcrypt.bcrypt'>
-2025-08-12 04:12:18,126 [DEBUG] Using proactor: IocpProactor
-2025-08-12 04:12:18,130 [INFO] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"

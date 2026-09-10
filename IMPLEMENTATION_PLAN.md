@@ -14,7 +14,7 @@ A FastAPI/Python-based reverse proxy and obfuscation gateway for secure, context
 - **LiteLLM Integration (Python):** Unified, OpenAI-compatible API gateway for routing sanitized prompts to multiple LLM providers.
 - **Policy Engine (Python):** Admin-defined rules for sensitive data detection and obfuscation strategies.
 - **Audit Logging & Observability (Python):** OpenTelemetry, ELK, or cloud-native logging. Immutable, tamper-evident logs.
-- **RBAC & Security Controls (Python):** Oso or similar for RBAC, end-to-end TLS, strict API authentication.
+- **RBAC & Security Controls (Python):** Typed tenant-aware RBAC, end-to-end TLS, strict API authentication.
 
 ---
 
@@ -51,7 +51,7 @@ A FastAPI/Python-based reverse proxy and obfuscation gateway for secure, context
 
 ### 3.7 RBAC & Security Controls
 - **Responsibilities:** Fine-grained access control for all APIs and admin functions.
-- **Tech:** Oso (Python), FastAPI dependencies.
+- **Tech:** Typed Python role and permission model, FastAPI dependencies.
 - **Planned for Phase 2.**
 
 ---
@@ -100,7 +100,7 @@ flowchart LR
 ## 6. Technology Stack Summary
 
 - **Language:** Python (all components)
-- **Frameworks:** FastAPI, HuggingFace Transformers, spaCy, LiteLLM, Oso, OpenTelemetry
+- **Frameworks:** FastAPI, HuggingFace Transformers, spaCy, LiteLLM, OpenTelemetry
 - **Database:** PostgreSQL (pgcrypto), optional HashiCorp Vault
 - **Deployment:** Docker, Kubernetes/OpenShift, on-prem or private cloud
 

@@ -1,23 +1,24 @@
-# Base Dockerfile template for all microservices
 FROM python:3.11-slim
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y build-essential libpq-dev && rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
-# Set working directory
 WORKDIR /app
 
-# Ensure requirements.txt gets copied from build context root of docker-compose
+RUN groupadd --system ob4scate \
+    && useradd --system --gid ob4scate --home-dir /app ob4scate
+
 COPY requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --requirement requirements.txt
 
-# Copy service source (current service context)
-# Ensure templates directory for policy_engine is included during build
-COPY . .
+COPY --chown=ob4scate:ob4scate . .
+RUN mkdir -p /app/.data /app/logs \
+    && chown -R ob4scate:ob4scate /app/.data /app/logs
 
-# Expose port from env or default
-ARG PORT=8000
-ENV PORT=${PORT}
+USER ob4scate
 
-# Entrypoint - run with Uvicorn
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
+EXPOSE 8000
+
+CMD ["uvicorn", "gateway_proxy.main:app", "--host", "0.0.0.0", "--port", "8000"]

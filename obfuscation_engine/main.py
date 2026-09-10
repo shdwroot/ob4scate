@@ -1,36 +1,53 @@
-from fastapi import FastAPI
+"""PII detection and redaction service."""
+
+import logging
 import re
+
 import spacy
+from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="Local LLM Obfuscation Engine", version="0.1.0")
+logger = logging.getLogger(__name__)
+app = FastAPI(title="Local LLM Obfuscation Engine", version="0.2.0")
 
-# Load spaCy English NER model
+EMAIL_PATTERN = re.compile(r"\b[\w.%+-]+@[\w.-]+\.[a-zA-Z]{2,}\b")
+MAX_TEXT_LENGTH = 100_000
+
 try:
     nlp = spacy.load("en_core_web_sm")
 except OSError:
-    nlp = None  # Will require download in production
+    nlp = None
+    logger.warning("spaCy model en_core_web_sm is unavailable; regex redaction only")
+
+
+class SanitizeRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
+
+
+def _sanitize(text: str) -> str:
+    sanitized = EMAIL_PATTERN.sub("[EMAIL]", text)
+    if nlp is None:
+        return sanitized
+
+    doc = nlp(sanitized)
+    for entity in reversed(doc.ents):
+        sanitized = (
+            sanitized[: entity.start_char] + f"[{entity.label_}]" + sanitized[entity.end_char :]
+        )
+    return sanitized
 
 
 @app.get("/health")
-async def health_check():
-    return {"status": "ok"}
+async def health_check() -> dict[str, str]:
+    return {
+        "status": "ok",
+        "ner_model": "available" if nlp is not None else "unavailable",
+    }
 
 
 @app.post("/sanitize")
-async def sanitize_text(data: dict):
-    """
-    Detects potential PII using regex + spaCy NER.
-    MVP: Returns an obfuscated version with placeholders.
-    """
-    text = data.get("text", "")
-
-    # Basic regex obfuscation example - replace email addresses
-    sanitized = re.sub(r"\b[\w.%+-]+@[\w.-]+\.[a-zA-Z]{2,}\b", "[EMAIL]", text)
-
-    # spaCy NER obfuscation if model loaded
-    if nlp:
-        doc = nlp(sanitized)
-        for ent in doc.ents:
-            sanitized = sanitized.replace(ent.text, f"[{ent.label_}]")
-
-    return {"original": text, "sanitized": sanitized}
+async def sanitize_text(data: SanitizeRequest) -> dict[str, str]:
+    """Return redacted text without echoing the original sensitive value."""
+    sanitized = await run_in_threadpool(_sanitize, data.text)
+    return {"sanitized": sanitized}

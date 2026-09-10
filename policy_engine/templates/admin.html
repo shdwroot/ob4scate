@@ -6,8 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   
   <!-- Local Black Dashboard CSS -->
-  <link rel="stylesheet" href="/policy/static/assets/css/black-dashboard.min.css">
-  <link rel="stylesheet" href="/policy/static/assets/css/nucleo-icons.css">
+  <link rel="stylesheet" href="./static/assets/css/black-dashboard.min.css">
+  <link rel="stylesheet" href="./static/assets/css/nucleo-icons.css">
   <link href="https://fonts.googleapis.com/css?family=Montserrat:400,700,200" rel="stylesheet">
   <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.1/css/all.css">
 </head>
@@ -26,13 +26,13 @@
         </div>
         <ul class="nav">
           <li class="active">
-            <a href="/policy/admin">
+            <a href="./admin">
               <i class="fas fa-cogs"></i>
               <p>Admin Panel</p>
             </a>
           </li>
           <li>
-            <a href="/policy/rules">
+            <a href="./rules">
               <i class="fas fa-database"></i>
               <p>API Rules</p>
             </a>
@@ -91,42 +91,52 @@
   </div>
 
   <!-- Local JS -->
-  <script src="/policy/static/assets/js/core/jquery.min.js"></script>
-  <script src="/policy/static/assets/js/core/popper.min.js"></script>
-  <script src="/policy/static/assets/js/core/bootstrap.min.js"></script>
-  <script src="/policy/static/assets/js/plugins/perfect-scrollbar.jquery.min.js"></script>
-  <script src="/policy/static/assets/js/black-dashboard.min.js"></script>
+  <script src="./static/assets/js/core/jquery.min.js"></script>
+  <script src="./static/assets/js/core/popper.min.js"></script>
+  <script src="./static/assets/js/core/bootstrap.min.js"></script>
+  <script src="./static/assets/js/plugins/perfect-scrollbar.jquery.min.js"></script>
+  <script src="./static/assets/js/black-dashboard.min.js"></script>
   <script>
+    function addField(container, key, value) {
+      const wrapper = document.createElement('div');
+      wrapper.className = typeof value === 'boolean' ? 'form-check' : 'form-group';
+
+      const label = document.createElement('label');
+      label.textContent = key;
+
+      let input;
+      if (Array.isArray(value)) {
+        input = document.createElement('textarea');
+        input.className = 'form-control';
+        input.rows = 8;
+        input.value = JSON.stringify(value, null, 2);
+      } else if (typeof value === 'boolean') {
+        input = document.createElement('input');
+        input.className = 'form-check-input';
+        input.type = 'checkbox';
+        input.checked = value;
+        input.id = `rule-${key}`;
+        label.className = 'form-check-label';
+        label.htmlFor = input.id;
+      } else {
+        input = document.createElement('input');
+        input.className = 'form-control';
+        input.type = 'text';
+        input.value = String(value);
+      }
+
+      input.dataset.key = key;
+      wrapper.append(input, label);
+      container.appendChild(wrapper);
+    }
+
     async function loadRules() {
-      const res = await fetch('/policy/rules');
+      const res = await fetch('./rules', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`Unable to load rules (${res.status})`);
       const rules = await res.json();
       const container = document.getElementById('rules-container');
-      container.innerHTML = '';
-
-      Object.entries(rules).forEach(([key, value]) => {
-        if (Array.isArray(value)) {
-          container.innerHTML += `
-            <div class="form-group">
-              <label>${key}</label>
-              <textarea class="form-control" rows="4" data-key="${key}">${JSON.stringify(value, null, 2)}</textarea>
-            </div>
-          `;
-        } else if (typeof value === 'boolean') {
-          container.innerHTML += `
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="${key}" ${value ? 'checked' : ''} data-key="${key}">
-              <label class="form-check-label" for="${key}">${key}</label>
-            </div>
-          `;
-        } else {
-          container.innerHTML += `
-            <div class="form-group">
-              <label>${key}</label>
-              <input class="form-control" type="text" value="${value}" data-key="${key}">
-            </div>
-          `;
-        }
-      });
+      container.replaceChildren();
+      Object.entries(rules).forEach(([key, value]) => addField(container, key, value));
     }
 
     document.getElementById('policy-form').addEventListener('submit', async (e) => {
@@ -145,16 +155,21 @@
           }
         }
       });
-      await fetch('/policy/rules', {
-        method: 'POST',
+      const response = await fetch('./rules', {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify(updatedRules)
       });
-      alert("Rules updated successfully");
+      if (!response.ok) {
+        alert(`Unable to update rules (${response.status})`);
+        return;
+      }
+      alert('Rules updated successfully');
       loadRules();
     });
 
-    loadRules();
+    loadRules().catch(() => alert('Unable to load policy rules'));
   </script>
 </body>
 </html>

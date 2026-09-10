@@ -1,95 +1,209 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-import datetime
-import sqlite3
-import os
+"""Tamper-evident audit event storage."""
+
+import hashlib
+import hmac
+import json
 import logging
-import sys
+import os
+import sqlite3
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
-app = FastAPI(title="Audit Logging Service", version="0.4.3")
+from fastapi import FastAPI, HTTPException, Query, status
+from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel, Field
 
-DB_PATH = os.getenv("AUDIT_LOG_DB", "audit_logs.db")
+logger = logging.getLogger(__name__)
+app = FastAPI(title="Audit Logging Service", version="0.5.0")
 
-# Ensure logs directory inside project root
-PROJECT_ROOT = os.path.abspath(os.getcwd())
-LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
-LOG_FILE = os.path.join(LOGS_DIR, "audit_service.log")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = Path(os.getenv("AUDIT_LOG_DB", PROJECT_ROOT / ".data" / "audit_logs.db"))
+GENESIS_HASH = "0" * 64
 
-# Force create logs directory
-os.makedirs(LOGS_DIR, exist_ok=True)
-
-# Force create log file
-if not os.path.exists(LOG_FILE):
-    with open(LOG_FILE, "w", encoding="utf-8") as f:
-        f.write("=== Audit Logging Service Started ===\n")
-
-# Configure logging
-file_handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
-stream_handler = logging.StreamHandler(sys.stdout)
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[file_handler, stream_handler]
-)
-
-logging.info(f"Logging initialized. Host log file path: {LOG_FILE}")
-
-# Ensure DB exists
-conn = sqlite3.connect(DB_PATH)
-c = conn.cursor()
-c.execute("""
-CREATE TABLE IF NOT EXISTS audit_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT,
-    event_type TEXT,
-    event_data TEXT
-)
-""")
-conn.commit()
-conn.close()
-logging.info("Database initialized.")
 
 class AuditLog(BaseModel):
-    event_type: str
-    event_data: dict
+    event_type: str = Field(pattern=r"^[A-Za-z0-9_.:-]{1,128}$")
+    event_data: dict[str, Any]
+
+
+def _signing_key() -> bytes:
+    key = os.getenv("AUDIT_LOG_SIGNING_KEY")
+    if not key or len(key) < 32:
+        raise RuntimeError("AUDIT_LOG_SIGNING_KEY must contain at least 32 characters")
+    return key.encode()
+
+
+def _connect() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(DB_PATH, timeout=5)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA busy_timeout=5000")
+    return connection
+
+
+def _initialize_database() -> None:
+    with _connect() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                event_data TEXT NOT NULL,
+                previous_hash TEXT NOT NULL,
+                event_hash TEXT NOT NULL UNIQUE
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp)"
+        )
+
+
+def _canonical_event(timestamp: str, event_type: str, event_data: str, previous_hash: str) -> bytes:
+    return json.dumps(
+        {
+            "timestamp": timestamp,
+            "event_type": event_type,
+            "event_data": json.loads(event_data),
+            "previous_hash": previous_hash,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+
+
+def _event_hash(timestamp: str, event_type: str, event_data: str, previous_hash: str) -> str:
+    return hmac.new(
+        _signing_key(),
+        _canonical_event(timestamp, event_type, event_data, previous_hash),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _store_event(event: AuditLog) -> tuple[int, str, str]:
+    timestamp = datetime.now(UTC).isoformat()
+    event_data = json.dumps(event.event_data, separators=(",", ":"), sort_keys=True)
+    connection = _connect()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        previous = connection.execute(
+            "SELECT event_hash FROM audit_logs ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        previous_hash = previous["event_hash"] if previous else GENESIS_HASH
+        digest = _event_hash(timestamp, event.event_type, event_data, previous_hash)
+        cursor = connection.execute(
+            """
+            INSERT INTO audit_logs
+                (timestamp, event_type, event_data, previous_hash, event_hash)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (timestamp, event.event_type, event_data, previous_hash, digest),
+        )
+        connection.commit()
+        return int(cursor.lastrowid), timestamp, digest
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _read_logs(limit: int) -> list[dict[str, Any]]:
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, timestamp, event_type, event_data, previous_hash, event_hash
+            FROM audit_logs
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "timestamp": row["timestamp"],
+            "event_type": row["event_type"],
+            "event_data": json.loads(row["event_data"]),
+            "previous_hash": row["previous_hash"],
+            "event_hash": row["event_hash"],
+        }
+        for row in rows
+    ]
+
+
+def _verify_chain() -> tuple[bool, int | None]:
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, timestamp, event_type, event_data, previous_hash, event_hash
+            FROM audit_logs
+            ORDER BY id ASC
+            """
+        ).fetchall()
+    previous_hash = GENESIS_HASH
+    for row in rows:
+        expected = _event_hash(
+            row["timestamp"], row["event_type"], row["event_data"], previous_hash
+        )
+        if not hmac.compare_digest(row["previous_hash"], previous_hash) or not hmac.compare_digest(
+            row["event_hash"], expected
+        ):
+            return False, int(row["id"])
+        previous_hash = row["event_hash"]
+    return True, None
+
+
+_initialize_database()
+
 
 @app.get("/health")
-async def health_check():
-    logging.debug("Health check accessed.")
-    file_handler.flush()
-    return {"status": "ok", "log_file": LOG_FILE}
+async def health_check() -> dict[str, str]:
+    try:
+        await run_in_threadpool(_signing_key)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Audit signing is not configured",
+        ) from exc
+    return {"status": "ok"}
 
-@app.post("/log")
-async def log_event(event: AuditLog):
-    timestamp = datetime.datetime.utcnow().isoformat()
-    log_msg = f"Logging event - Type: {event.event_type}, Data: {event.event_data}"
-    logging.info(log_msg)
 
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO audit_logs (timestamp, event_type, event_data) VALUES (?, ?, ?)",
-        (timestamp, event.event_type, str(event.event_data))
-    )
-    conn.commit()
-    conn.close()
+@app.post("/log", status_code=status.HTTP_201_CREATED)
+async def log_event(event: AuditLog) -> dict[str, Any]:
+    try:
+        event_id, timestamp, digest = await run_in_threadpool(_store_event, event)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Audit signing is not configured",
+        ) from exc
+    logger.info("Stored audit event id=%s type=%s", event_id, event.event_type)
+    return {
+        "status": "logged",
+        "id": event_id,
+        "timestamp": timestamp,
+        "event_hash": digest,
+    }
 
-    logging.debug(f"Event stored at {timestamp}")
-    file_handler.flush()
-    return {"status": "logged", "log_file": LOG_FILE}
 
 @app.get("/logs")
-async def get_logs(limit: int = 100):
-    logging.debug(f"Retrieving last {limit} logs.")
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT id, timestamp, event_type, event_data FROM audit_logs ORDER BY id DESC LIMIT ?", (limit,))
-    rows = c.fetchall()
-    conn.close()
+async def get_logs(
+    limit: int = Query(default=100, ge=1, le=1_000),
+) -> list[dict[str, Any]]:
+    return await run_in_threadpool(_read_logs, limit)
 
-    logging.debug(f"Fetched {len(rows)} records.")
-    file_handler.flush()
-    return [
-        {"id": r[0], "timestamp": r[1], "event_type": r[2], "event_data": r[3]}
-        for r in rows
-    ]
+
+@app.get("/verify")
+async def verify_logs() -> dict[str, Any]:
+    try:
+        valid, invalid_event_id = await run_in_threadpool(_verify_chain)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Audit signing is not configured",
+        ) from exc
+    return {"valid": valid, "invalid_event_id": invalid_event_id}

@@ -1,0 +1,80 @@
+[project]
+name = "ob4scate"
+version = "0.2.0"
+description = "A privacy-preserving gateway for safely routing sanitized data to LLMs"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "cryptography>=50,<51",
+    "fastapi>=0.141,<1",
+    "httpx>=0.28,<1",
+    "jinja2>=3.1,<4",
+    "psycopg2-binary>=2.9,<3",
+    "pwdlib[argon2]>=0.3,<1",
+    "pyjwt[crypto]>=2.10,<3",
+    "python-multipart>=0.0.20,<1",
+    "redis>=8.1,<9",
+    "regex>=2025.7.34",
+    "spacy>=3.8,<4",
+    "uvicorn[standard]>=0.52,<1",
+]
+
+[dependency-groups]
+dev = [
+    "bandit>=1.9,<2",
+    "httpx2>=2.12,<3",
+    "pip-audit>=2.9,<3",
+    "pytest>=9,<10",
+    "pytest-asyncio>=1.4,<2",
+    "pytest-cov>=7,<8",
+    "ruff>=0.13,<1",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+pythonpath = ["."]
+testpaths = [
+    "audit_logging",
+    "auth_service",
+    "gateway_proxy",
+    "litellm_integration",
+    "obfuscation_engine",
+    "policy_engine",
+    "tokenization_vault",
+]
+
+[tool.ruff]
+extend-exclude = [".kiro", "assets"]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
+ignore = ["B008"] # FastAPI dependency injection intentionally uses call defaults.
+
+[tool.ruff.lint.per-file-ignores]
+"**/test_*.py" = ["S101"]
+
+[tool.bandit]
+exclude_dirs = [".venv", "**/__pycache__", "*/test_*.py"]
+skips = ["B101"]
+
+[tool.coverage.run]
+branch = true
+omit = ["*/test_*.py"]
+source = [
+    "audit_logging",
+    "auth_service",
+    "gateway_proxy",
+    "litellm_integration",
+    "obfuscation_engine",
+    "policy_engine",
+    "tokenization_vault",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
