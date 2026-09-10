@@ -1,13 +1,55 @@
 # ob4scate
 
-`ob4scate` is a Python/FastAPI gateway for redacting sensitive text before it is sent to a
-local or private LLM. The repository contains authentication and RBAC, policy-based
-redaction, encrypted token mappings, LLM routing, and tamper-evident audit storage.
+`ob4scate` is a Python/FastAPI privacy gateway for enterprises that need to use shared or
+public LLM APIs without exposing identifiable client data to the model provider. Its primary
+use case is an organization that does not have a dedicated, isolated LLM tenant and therefore
+needs to remove or replace sensitive values before a prompt crosses the enterprise boundary.
 
-This codebase is an actively developed foundation. The checked-in
-[implementation plan](./IMPLEMENTATION_PLAN.md) lists larger enterprise features that are
-not yet complete, including external identity providers, Kubernetes deployment, distributed
-tracing, provider failover, and model fine-tuning.
+The intended request path is:
+
+```text
+Enterprise application
+        |
+        | prompt containing client or customer data
+        v
+Ob4scate inside the enterprise-controlled boundary
+        |
+        | redacted or tokenized prompt
+        v
+Organization-approved shared/public LLM API
+```
+
+Ob4scate provides authentication and tenant-aware RBAC, policy-based detection and redaction,
+encrypted token mappings, LLM routing components, and tamper-evident audit storage. A local
+model is used only as a development or detection component where configured; it is not the
+system that the product is primarily intended to protect prompts from.
+
+This codebase is an actively developed foundation. It contains the individual security and
+redaction services, but the complete production workflow that sanitizes a prompt, sends it to
+a public provider, and safely restores authorized values in the response is not yet wired end
+to end. The checked-in [implementation plan](./IMPLEMENTATION_PLAN.md) lists that work and
+other unfinished enterprise capabilities, including external identity providers, Kubernetes
+deployment, distributed tracing, provider failover, and model fine-tuning.
+
+## What is protected by default
+
+The policy engine enables defaults for common credentials, government identifiers, financial
+details, health and insurance information, identity and contact details, addresses, and
+network or device identifiers. These include email addresses, phone numbers, names, dates of
+birth, South African identity numbers, passports, payment cards, bank details, medical
+records, API secrets, IP addresses, device IDs, and precise locations.
+
+Run the policy service to inspect the full detector catalog and try the built-in example:
+
+```bash
+./scripts/uv-local run uvicorn policy_engine.main:app --reload --port 8004
+```
+
+Open <http://127.0.0.1:8004/admin>. Deterministic detectors are enabled without an external
+service. Free-form name and location recognition is extended when the optional local spaCy
+model is installed. No automated detector can guarantee that every sensitive value in
+arbitrary text will be found, so enterprise-specific formats and human review remain
+important for high-risk workflows.
 
 ## Security model
 
@@ -34,7 +76,7 @@ auth_service/          JWT, sessions, password hashing, and RBAC
 obfuscation_engine/    Email and named-entity redaction
 policy_engine/         Validated, hot-reloadable redaction rules and admin UI
 tokenization_vault/    Encrypted token mappings in PostgreSQL
-litellm_integration/   Async Ollama-compatible LLM connector and routing rules
+litellm_integration/   Ollama-compatible development connector and routing rules
 audit_logging/         HMAC-chained SQLite audit events
 ```
 
@@ -93,6 +135,9 @@ docker compose exec ollama ollama pull mistral
 
 Only `http://127.0.0.1:8000` is published to the host. PostgreSQL, Redis, Ollama,
 and the service-specific FastAPI processes are reachable only inside the Compose network.
+Ollama is the repository's current development upstream so the flow can be exercised without
+sending test data to a third party. It is not the product's target LLM deployment model;
+production multi-provider routing to approved public/shared LLM APIs remains planned work.
 
 Stop the stack without deleting its data:
 
