@@ -8,12 +8,19 @@ import regex
 import spacy
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
 
+from policy_engine.sensitive_data import (
+    CORE_DETECTORS,
+    DEFAULT_EXAMPLE_TEXT,
+    DEFAULT_SENSITIVE_DATA,
+)
+
 logger = logging.getLogger(__name__)
-app = FastAPI(title="Policy Engine", version="0.5.0")
+app = FastAPI(title="Policy Engine", version="0.6.0")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "assets"), name="static")
@@ -47,6 +54,7 @@ class PolicyRules(BaseModel):
     obfuscate_email: bool = True
     obfuscate_phone: bool = True
     obfuscate_names: bool = True
+    obfuscate_locations: bool = True
     custom_patterns: list[PatternRule] = Field(default_factory=list, max_length=100)
 
 
@@ -54,6 +62,7 @@ class PolicyUpdate(BaseModel):
     obfuscate_email: bool | None = None
     obfuscate_phone: bool | None = None
     obfuscate_names: bool | None = None
+    obfuscate_locations: bool | None = None
     custom_patterns: list[PatternRule] | None = Field(default=None, max_length=100)
 
 
@@ -63,36 +72,33 @@ class TextData(BaseModel):
 
 policy_rules = PolicyRules(
     custom_patterns=[
-        PatternRule(name="CreditCard", pattern=r"\b(?:\d[ -]*?){13,16}\b"),
-        PatternRule(name="Passport", pattern=r"\b[A-PR-WYa-pr-wy][1-9]\d\s?\d{4}[1-9]\b"),
-        PatternRule(name="SA_ID", pattern=r"\b\d{6}\s?\d{4}\s?\d{3}\b"),
-        PatternRule(name="PolicyNumber", pattern=r"\b[A-Z]{2,5}\d{5,10}\b"),
-        PatternRule(name="MemberNumber", pattern=r"\b\d{5,15}\b"),
-        PatternRule(
-            name="MedicalInfo",
-            pattern=r"\b(?:HIV|AIDS|Diabetes|Cancer|Hypertension)\b",
-        ),
-        PatternRule(name="VehicleReg", pattern=r"\b[A-Z]{2,3}\s?\d{3,4}\s?[A-Z]{2,3}\b"),
+        PatternRule(name=definition["name"], pattern=definition["pattern"])
+        for definition in DEFAULT_SENSITIVE_DATA
     ]
 )
 policy_lock = asyncio.Lock()
 
+POLICY_CATALOG = [
+    *CORE_DETECTORS,
+    *[
+        {
+            "name": definition["name"],
+            "category": definition["category"],
+            "description": definition["description"],
+            "example": definition["example"],
+        }
+        for definition in DEFAULT_SENSITIVE_DATA
+    ],
+]
+POLICY_CATEGORY_COUNT = len({detector["category"] for detector in POLICY_CATALOG})
+
 EMAIL_PATTERN = regex.compile(r"\b[\w.%+-]+@[\w.-]+\.[a-zA-Z]{2,}\b")
 PHONE_PATTERN = regex.compile(
-    r"\b(?:\+?(\d{1,3})[-.●]?)?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}\b"
+    r"(?<!\w)(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)|\d{2,4})[\s.-]\d{3,4}[\s.-]\d{3,4}(?!\w)|(?<!\w)\+?\d{10,15}(?!\w)"
 )
 
 
 def _apply_policies(text: str, rules: PolicyRules) -> str:
-    if rules.obfuscate_email:
-        text = EMAIL_PATTERN.sub("[EMAIL]", text, timeout=REGEX_TIMEOUT_SECONDS)
-    if rules.obfuscate_phone:
-        text = PHONE_PATTERN.sub("[PHONE]", text, timeout=REGEX_TIMEOUT_SECONDS)
-    if rules.obfuscate_names and nlp is not None:
-        doc = nlp(text)
-        people = [entity for entity in doc.ents if entity.label_ == "PERSON"]
-        for entity in reversed(people):
-            text = text[: entity.start_char] + "[NAME]" + text[entity.end_char :]
     for rule in rules.custom_patterns:
         text = regex.sub(
             rule.pattern,
@@ -101,15 +107,34 @@ def _apply_policies(text: str, rules: PolicyRules) -> str:
             flags=regex.IGNORECASE,
             timeout=REGEX_TIMEOUT_SECONDS,
         )
+    if rules.obfuscate_email:
+        text = EMAIL_PATTERN.sub("[EMAIL]", text, timeout=REGEX_TIMEOUT_SECONDS)
+    if rules.obfuscate_phone:
+        text = PHONE_PATTERN.sub("[PHONE]", text, timeout=REGEX_TIMEOUT_SECONDS)
+    if (rules.obfuscate_names or rules.obfuscate_locations) and nlp is not None:
+        doc = nlp(text)
+        replacements = []
+        for entity in doc.ents:
+            if rules.obfuscate_names and entity.label_ == "PERSON":
+                replacements.append((entity.start_char, entity.end_char, "[PERSON]"))
+            elif rules.obfuscate_locations and entity.label_ in {"FAC", "GPE", "LOC"}:
+                replacements.append((entity.start_char, entity.end_char, "[LOCATION]"))
+        for start, end, replacement in reversed(replacements):
+            text = text[:start] + replacement + text[end:]
     return text
 
 
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     return {
-        "status": "ok",
+        "status": "ok" if nlp is not None else "degraded",
         "ner_model": "available" if nlp is not None else "unavailable",
     }
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    return RedirectResponse(url="admin", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
 @app.get("/rules", response_model=PolicyRules)
@@ -118,12 +143,23 @@ async def get_rules() -> PolicyRules:
         return policy_rules.model_copy(deep=True)
 
 
+@app.get("/catalog")
+async def get_catalog() -> list[dict[str, str]]:
+    return POLICY_CATALOG
+
+
 @app.get("/admin", include_in_schema=False)
 async def admin_ui(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="admin.html",
-        context={"rules": policy_rules.model_dump(mode="json")},
+        context={
+            "catalog": POLICY_CATALOG,
+            "category_count": POLICY_CATEGORY_COUNT,
+            "example_text": DEFAULT_EXAMPLE_TEXT,
+            "ner_available": nlp is not None,
+            "rules": policy_rules.model_dump(mode="json"),
+        },
     )
 
 

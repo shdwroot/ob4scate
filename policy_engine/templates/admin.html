@@ -1,175 +1,341 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Policy Engine Admin</title>
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  
-  <!-- Local Black Dashboard CSS -->
-  <link rel="stylesheet" href="./static/assets/css/black-dashboard.min.css">
-  <link rel="stylesheet" href="./static/assets/css/nucleo-icons.css">
-  <link href="https://fonts.googleapis.com/css?family=Montserrat:400,700,200" rel="stylesheet">
-  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.1/css/all.css">
+  <meta name="color-scheme" content="dark">
+  <title>Ob4scate Policy Engine</title>
+  <style>
+    :root {
+      --bg: #090d18;
+      --panel: #111827;
+      --line: #2a3853;
+      --text: #f3f6fb;
+      --muted: #9baac1;
+      --accent: #7c5cff;
+      --accent-soft: #2b2358;
+      --success: #36d399;
+      --warning: #fbbf24;
+      --danger: #fb7185;
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 90% 5%, rgba(124, 92, 255, .18), transparent 28rem), var(--bg);
+      color: var(--text);
+      font: 15px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, textarea, input { font: inherit; }
+    a { color: inherit; }
+    code { overflow-wrap: anywhere; }
+    .shell { width: min(1480px, 100%); margin: 0 auto; padding: 0 28px 56px; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 18px 28px;
+      border-bottom: 1px solid rgba(155, 170, 193, .18);
+      background: rgba(9, 13, 24, .88);
+      backdrop-filter: blur(18px);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; letter-spacing: -.02em; }
+    .brand-mark {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border-radius: 12px;
+      background: linear-gradient(145deg, var(--accent), #42c6ff);
+      box-shadow: 0 8px 28px rgba(124, 92, 255, .35);
+    }
+    .nav { display: flex; align-items: center; gap: 8px; }
+    .nav a { padding: 9px 13px; border-radius: 10px; color: var(--muted); text-decoration: none; }
+    .nav a:hover, .nav a:focus-visible { background: #172033; color: var(--text); }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(300px, .7fr);
+      gap: 22px;
+      padding: 56px 0 26px;
+      align-items: end;
+    }
+    .eyebrow { margin: 0 0 10px; color: #a99bff; font-size: 12px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { max-width: 900px; margin-bottom: 14px; font-size: clamp(36px, 6vw, 72px); line-height: .98; letter-spacing: -.055em; }
+    h2 { margin-bottom: 8px; font-size: clamp(24px, 3vw, 34px); letter-spacing: -.035em; }
+    h3 { margin-bottom: 7px; font-size: 16px; }
+    .lede { max-width: 760px; margin-bottom: 0; color: var(--muted); font-size: 17px; }
+    .hero-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .stat { padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: rgba(17, 24, 39, .72); }
+    .stat strong { display: block; font-size: 28px; letter-spacing: -.04em; }
+    .stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+    .notice {
+      display: none;
+      margin: 20px 0;
+      padding: 14px 16px;
+      border: 1px solid var(--warning);
+      border-radius: 12px;
+      background: rgba(251, 191, 36, .1);
+      color: #fde68a;
+    }
+    .notice.visible { display: block; }
+    .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 22px; margin-top: 22px; }
+    .span-7 { grid-column: span 7; }
+    .span-5 { grid-column: span 5; }
+    .span-12 { grid-column: 1 / -1; }
+    .panel { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(17, 24, 39, .88); box-shadow: 0 18px 50px rgba(0, 0, 0, .18); }
+    .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 22px 22px 0; }
+    .panel-body { padding: 22px; }
+    .muted { color: var(--muted); }
+    .badge { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border-radius: 999px; background: var(--accent-soft); color: #c9c1ff; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .badge::before { width: 7px; height: 7px; border-radius: 50%; background: var(--success); content: ""; }
+    .badge.degraded::before { background: var(--warning); }
+    label { display: block; margin-bottom: 8px; color: #d9e2f1; font-size: 13px; font-weight: 700; }
+    textarea, input[type="text"] {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      outline: none;
+      background: #0b1220;
+      color: var(--text);
+    }
+    textarea { min-height: 210px; padding: 15px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+    textarea:focus, input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124, 92, 255, .18); }
+    .output { min-height: 210px; margin: 0; padding: 15px; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: #070b13; color: #b9f6da; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+    .button { border: 0; border-radius: 11px; padding: 11px 16px; background: linear-gradient(135deg, var(--accent), #5c8dff); color: white; cursor: pointer; font-weight: 800; }
+    .button:hover { filter: brightness(1.08); }
+    .button:focus-visible { outline: 3px solid rgba(124, 92, 255, .38); outline-offset: 2px; }
+    .status { min-height: 22px; color: var(--muted); font-size: 13px; }
+    .status.success { color: var(--success); }
+    .status.error { color: var(--danger); }
+    .toggle-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .toggle { display: flex; align-items: center; gap: 10px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: #0b1220; }
+    .toggle label { margin: 0; cursor: pointer; }
+    .toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+    details { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 16px; }
+    summary { cursor: pointer; color: #c9c1ff; font-weight: 800; }
+    details .form-group { margin-top: 14px; }
+    .catalog { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+    .detector { min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: #0b1220; }
+    .detector-category { color: #a99bff; font-size: 10px; font-weight: 900; letter-spacing: .11em; text-transform: uppercase; }
+    .detector code { display: block; margin: 8px 0; color: #f7d58b; font-size: 11px; }
+    .detector p { margin: 0; color: var(--muted); font-size: 13px; }
+    .example { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(42, 56, 83, .7); color: #cfdaea; font-size: 12px; overflow-wrap: anywhere; }
+    .footnote { margin: 18px 0 0; color: var(--muted); font-size: 12px; }
+    footer { padding: 28px 16px; color: var(--muted); font-size: 12px; text-align: center; }
+    @media (max-width: 980px) {
+      .hero { grid-template-columns: 1fr; }
+      .span-7, .span-5 { grid-column: 1 / -1; }
+      .catalog { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .shell { padding: 0 16px 36px; }
+      .topbar { padding: 14px 16px; }
+      .nav a:first-child { display: none; }
+      .hero { padding-top: 34px; }
+      .hero-stats, .toggle-list, .catalog { grid-template-columns: 1fr; }
+      .panel-head, .panel-body { padding-left: 16px; padding-right: 16px; }
+      .panel-head { flex-direction: column; }
+    }
+  </style>
 </head>
-<body class="sidebar-mini">
-  <div class="wrapper">
-    <!-- Sidebar -->
-    <div class="sidebar" data-color="blue">
-      <div class="sidebar-wrapper">
-        <div class="logo">
-          <a href="#" class="simple-text logo-mini">
-            <i class="fas fa-shield-alt"></i>
-          </a>
-          <a href="#" class="simple-text logo-normal">
-            Policy Engine
-          </a>
-        </div>
-        <ul class="nav">
-          <li class="active">
-            <a href="./admin">
-              <i class="fas fa-cogs"></i>
-              <p>Admin Panel</p>
-            </a>
-          </li>
-          <li>
-            <a href="./rules">
-              <i class="fas fa-database"></i>
-              <p>API Rules</p>
-            </a>
-          </li>
-        </ul>
-      </div>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">◈</span> Ob4scate</div>
+    <nav class="nav" aria-label="Policy navigation">
+      <a href="#catalog">Detector catalog</a>
+      <a href="./rules">Rules API</a>
+      <a href="./docs">API docs</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <div id="file-notice" class="notice" role="alert">
+      This dashboard must be served by FastAPI. Run the policy service and open
+      <strong>http://127.0.0.1:8004/admin</strong> instead of this template file.
     </div>
-
-    <!-- Main Panel -->
-    <div class="main-panel">
-      <!-- Navbar -->
-      <nav class="navbar navbar-expand-lg navbar-absolute navbar-transparent">
-        <div class="container-fluid">
-          <div class="navbar-wrapper">
-            <a class="navbar-brand" href="#">Policy Engine Admin</a>
+    <section class="hero" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">Privacy policy control plane</p>
+        <h1 id="page-title">Sensitive data protection, visible end to end.</h1>
+        <p class="lede">Review every default detector, test realistic input, and manage the active rules from one complete page.</p>
+      </div>
+      <div class="hero-stats" aria-label="Coverage summary">
+        <div class="stat"><strong>{{ catalog|length }}</strong><span>default detectors</span></div>
+        <div class="stat"><strong>{{ category_count }}</strong><span>protection groups</span></div>
+      </div>
+    </section>
+    <div class="grid">
+      <section class="panel span-7" aria-labelledby="example-heading">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Try it</p>
+            <h2 id="example-heading">Redaction example</h2>
+            <p class="muted">The sample includes contact, identity, financial, health, location, device, and credential data.</p>
           </div>
         </div>
-      </nav>
-
-      <!-- Content -->
-      <div class="content">
-        <div class="row">
-          <div class="col-md-12">
-            <div class="card">
-              <div class="card-header">
-                <h4 class="card-title">Current Policy Rules</h4>
-              </div>
-              <div class="card-body">
-                <form id="policy-form">
-                  <div id="rules-container" class="mb-3">
-                    <!-- Rules loaded dynamically -->
-                  </div>
-                  <button type="submit" class="btn btn-primary">Save Changes</button>
-                </form>
-              </div>
+        <div class="panel-body">
+          <label for="example-input">Sensitive input</label>
+          <textarea id="example-input" spellcheck="false">{{ example_text }}</textarea>
+          <div class="actions">
+            <button id="run-example" class="button" type="button">Protect this example</button>
+            <span id="example-status" class="status" role="status" aria-live="polite"></span>
+          </div>
+          <label for="example-output" style="margin-top: 18px">Protected output</label>
+          <pre id="example-output" class="output" tabindex="0">Run the example to see every detected value replaced.</pre>
+        </div>
+      </section>
+      <section class="panel span-5" aria-labelledby="rules-heading">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Active configuration</p>
+            <h2 id="rules-heading">Policy rules</h2>
+            <p class="muted">Built-ins are enabled by default. Custom detector JSON remains editable for regional or domain-specific formats.</p>
+          </div>
+          <span class="badge{% if not ner_available %} degraded{% endif %}">NLP {{ "available" if ner_available else "optional" }}</span>
+        </div>
+        <div class="panel-body">
+          <form id="policy-form">
+            <div id="rules-container" class="toggle-list" aria-live="polite"></div>
+            <div class="actions">
+              <button type="submit" class="button">Save policy</button>
+              <span id="policy-status" class="status" role="status" aria-live="polite"></span>
             </div>
+          </form>
+        </div>
+      </section>
+      <section id="catalog" class="panel span-12" aria-labelledby="catalog-heading">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Full default coverage</p>
+            <h2 id="catalog-heading">Sensitive-data detector catalog</h2>
+            <p class="muted">Deterministic rules cover structured identifiers. NLP extends coverage to free-form names and locations when its local model is installed.</p>
           </div>
         </div>
-      </div>
-
-      <!-- Footer -->
-      <footer class="footer">
-        <div class="container-fluid">
-          <nav>
-            <ul>
-              <li>
-                <a href="https://www.creative-tim.com/product/black-dashboard">
-                  Black Dashboard Theme
-                </a>
-              </li>
-            </ul>
-          </nav>
+        <div class="panel-body">
+          <div class="catalog">
+            {% for detector in catalog %}
+            <article class="detector">
+              <span class="detector-category">{{ detector.category }}</span>
+              <code>{{ detector.name }}</code>
+              <p>{{ detector.description }}</p>
+              <div class="example"><strong>Example:</strong> {{ detector.example }}</div>
+            </article>
+            {% endfor %}
+          </div>
+          <p class="footnote">No detector can guarantee every possible sensitive value in arbitrary prose. Add organization-specific formats and keep human review for high-risk workflows.</p>
         </div>
-      </footer>
+      </section>
     </div>
-  </div>
-
-  <!-- Local JS -->
-  <script src="./static/assets/js/core/jquery.min.js"></script>
-  <script src="./static/assets/js/core/popper.min.js"></script>
-  <script src="./static/assets/js/core/bootstrap.min.js"></script>
-  <script src="./static/assets/js/plugins/perfect-scrollbar.jquery.min.js"></script>
-  <script src="./static/assets/js/black-dashboard.min.js"></script>
+  </main>
+  <footer>Ob4scate Policy Engine · local-first sensitive data controls</footer>
   <script>
-    function addField(container, key, value) {
-      const wrapper = document.createElement('div');
-      wrapper.className = typeof value === 'boolean' ? 'form-check' : 'form-group';
+    const rulesContainer = document.getElementById('rules-container');
+    const policyStatus = document.getElementById('policy-status');
+    const exampleStatus = document.getElementById('example-status');
 
-      const label = document.createElement('label');
-      label.textContent = key;
+    function setStatus(element, message, kind = '') {
+      element.textContent = message;
+      element.className = `status ${kind}`.trim();
+    }
 
-      let input;
+    async function fetchJson(path, options = {}) {
+      const response = await fetch(path, { credentials: 'same-origin', ...options });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      return response.json();
+    }
+
+    function addField(key, value) {
       if (Array.isArray(value)) {
-        input = document.createElement('textarea');
-        input.className = 'form-control';
-        input.rows = 8;
-        input.value = JSON.stringify(value, null, 2);
-      } else if (typeof value === 'boolean') {
-        input = document.createElement('input');
-        input.className = 'form-check-input';
-        input.type = 'checkbox';
-        input.checked = value;
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        const group = document.createElement('div');
+        const label = document.createElement('label');
+        const input = document.createElement('textarea');
+        summary.textContent = `${value.length} structured detectors · edit JSON`;
+        group.className = 'form-group';
+        label.textContent = 'Detector definitions';
+        label.htmlFor = `rule-${key}`;
         input.id = `rule-${key}`;
-        label.className = 'form-check-label';
-        label.htmlFor = input.id;
-      } else {
-        input = document.createElement('input');
-        input.className = 'form-control';
-        input.type = 'text';
-        input.value = String(value);
+        input.rows = 18;
+        input.value = JSON.stringify(value, null, 2);
+        input.dataset.key = key;
+        group.append(label, input);
+        details.append(summary, group);
+        rulesContainer.after(details);
+        return;
       }
-
+      const wrapper = document.createElement('div');
+      const input = document.createElement('input');
+      const label = document.createElement('label');
+      wrapper.className = 'toggle';
+      input.type = 'checkbox';
+      input.checked = Boolean(value);
+      input.id = `rule-${key}`;
       input.dataset.key = key;
+      label.htmlFor = input.id;
+      label.textContent = key.replaceAll('_', ' ');
       wrapper.append(input, label);
-      container.appendChild(wrapper);
+      rulesContainer.appendChild(wrapper);
     }
 
     async function loadRules() {
-      const res = await fetch('./rules', { credentials: 'same-origin' });
-      if (!res.ok) throw new Error(`Unable to load rules (${res.status})`);
-      const rules = await res.json();
-      const container = document.getElementById('rules-container');
-      container.replaceChildren();
-      Object.entries(rules).forEach(([key, value]) => addField(container, key, value));
+      setStatus(policyStatus, 'Loading policy…');
+      const rules = await fetchJson('./rules');
+      rulesContainer.replaceChildren();
+      document.querySelector('#policy-form details')?.remove();
+      Object.entries(rules).forEach(([key, value]) => addField(key, value));
+      setStatus(policyStatus, 'Policy loaded', 'success');
     }
 
-    document.getElementById('policy-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const inputs = document.querySelectorAll('#rules-container [data-key]');
+    async function saveRules(event) {
+      event.preventDefault();
+      setStatus(policyStatus, 'Saving…');
       const updatedRules = {};
-      inputs.forEach(input => {
-        const key = input.getAttribute('data-key');
-        if (input.type === 'checkbox') {
-          updatedRules[key] = input.checked;
-        } else {
-          try {
-            updatedRules[key] = JSON.parse(input.value);
-          } catch {
-            updatedRules[key] = input.value;
-          }
-        }
+      document.querySelectorAll('#policy-form [data-key]').forEach(input => {
+        const key = input.dataset.key;
+        updatedRules[key] = input.type === 'checkbox' ? input.checked : JSON.parse(input.value);
       });
-      const response = await fetch('./rules', {
+      await fetchJson('./rules', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
         body: JSON.stringify(updatedRules)
       });
-      if (!response.ok) {
-        alert(`Unable to update rules (${response.status})`);
-        return;
-      }
-      alert('Rules updated successfully');
-      loadRules();
+      await loadRules();
+      setStatus(policyStatus, 'Policy saved', 'success');
+    }
+
+    async function runExample() {
+      setStatus(exampleStatus, 'Protecting sample…');
+      const payload = await fetchJson('./enforce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: document.getElementById('example-input').value })
+      });
+      document.getElementById('example-output').textContent = payload.obfuscated;
+      setStatus(exampleStatus, 'Sensitive values replaced', 'success');
+    }
+
+    document.getElementById('policy-form').addEventListener('submit', event => {
+      saveRules(event).catch(error => setStatus(policyStatus, `Unable to save: ${error.message}`, 'error'));
+    });
+    document.getElementById('run-example').addEventListener('click', () => {
+      runExample().catch(error => setStatus(exampleStatus, `Unable to run: ${error.message}`, 'error'));
     });
 
-    loadRules().catch(() => alert('Unable to load policy rules'));
+    if (location.protocol === 'file:') {
+      document.getElementById('file-notice').classList.add('visible');
+      setStatus(policyStatus, 'Start FastAPI to load the active policy', 'error');
+    } else {
+      loadRules().catch(error => setStatus(policyStatus, `Unable to load: ${error.message}`, 'error'));
+      runExample().catch(error => setStatus(exampleStatus, `Unable to run: ${error.message}`, 'error'));
+    }
   </script>
 </body>
 </html>

@@ -1,19 +1,35 @@
 from fastapi.testclient import TestClient
 
-from policy_engine.main import app
+from policy_engine.main import POLICY_CATALOG, POLICY_CATEGORY_COUNT, app
 
 client = TestClient(app)
 
 
-def test_admin_serves_page_rules_and_static_assets():
-    """Regression: the hardcoded proxy root path made every static asset return 404."""
+def test_admin_serves_complete_policy_dashboard():
     admin_response = client.get("/admin")
     rules_response = client.get("/rules")
-    asset_response = client.get("/static/assets/css/black-dashboard.min.css")
 
     assert admin_response.status_code == 200
-    assert "Policy Engine Admin" in admin_response.text
+    assert "Ob4scate Policy Engine" in admin_response.text
+    assert "Redaction example" in admin_response.text
+    assert "Sensitive-data detector catalog" in admin_response.text
+    assert f">{len(POLICY_CATALOG)}<" in admin_response.text
+    assert f">{POLICY_CATEGORY_COUNT}<" in admin_response.text
+    for detector in POLICY_CATALOG:
+        assert detector["name"] in admin_response.text
     assert rules_response.status_code == 200
     assert rules_response.json()["obfuscate_email"] is True
-    assert asset_response.status_code == 200
-    assert "text/css" in asset_response.headers["content-type"]
+
+
+def test_root_redirects_to_admin_without_a_proxy_prefix():
+    response = client.get("/", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "admin"
+
+
+def test_catalog_api_exposes_the_same_complete_catalog():
+    response = client.get("/catalog")
+
+    assert response.status_code == 200
+    assert response.json() == POLICY_CATALOG
